@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INDEX 11 — XML Viewer (Google Drive Fetch)</title>
+<style>
+body {font-family: Arial, sans-serif; margin: 20px; background: #ffffff; color: #222;}
+h2 {color: #0066cc;}
+input[type="text"] {padding: 8px; width: 50%; margin-bottom: 12px; border-radius: 5px; border: 1px solid #ccc;}
+table {width: 100%; border-collapse: collapse; margin-top: 10px;}
+th, td {border: 1px solid #ddd; padding: 6px; font-size: 13px; text-align: left;}
+th {background: #e8f3ff; position: sticky; top: 0;}
+tr:nth-child(even) {background: #f9f9f9;}
+.highlight {background-color: #fff8c4;}
+#log {background: #f3f3f3; border: 1px solid #ddd; padding: 8px; border-radius: 5px; font-size: 13px; height: 90px; overflow-y: auto;}
+</style>
+</head>
+<body>
+<h2>INDEX 11 — XML Viewer (Google Drive Fetch)</h2>
+<p>This page automatically loads your XML from Google Drive and displays it in a searchable table.</p>
+
+<div id="log"></div>
+
+<input type="text" id="search" placeholder="Type to search across all fields..." />
+
+<div style="overflow:auto; max-height:70vh;">
+<table id="xmlTable">
+  <thead id="thead"></thead>
+  <tbody id="tbody"></tbody>
+</table>
+</div>
+
+<script>
+const xmlUrl = "https://drive.google.com/uc?export=download&id=1KerQEw-tfkzK62qge36ZkOUkOY5whWYX";
+const logBox = document.getElementById("log");
+function log(msg){ logBox.innerHTML += '[' + new Date().toLocaleTimeString() + '] ' + msg + '<br>'; }
+
+let flatData = [];
+
+log("Fetching XML from Google Drive...");
+
+fetch(xmlUrl)
+  .then(r => {
+    if (!r.ok) throw new Error("Network response was not ok");
+    log("Download started...");
+    return r.text();
+  })
+  .then(str => {
+    log("Parsing XML...");
+    const xml = new DOMParser().parseFromString(str, "text/xml");
+    log("Flattening XML structure...");
+    const data = [];
+    Array.from(xml.documentElement.children).forEach(node => data.push(flattenNode(node)));
+    flatData = data;
+    log("Rendering table with " + flatData.length + " rows...");
+    renderTable(flatData);
+    log("Done!");
+  })
+  .catch(err => log("Error: " + err.message));
+
+function flattenNode(node, prefix = "") {
+  let obj = {};
+  const nodeName = prefix ? prefix + "_" + node.nodeName : node.nodeName;
+  if (node.children.length === 0) {
+    obj[nodeName] = node.textContent.trim();
+  } else {
+    Array.from(node.children).forEach(child => {
+      Object.assign(obj, flattenNode(child, nodeName));
+    });
+  }
+  return obj;
+}
+
+function renderTable(data) {
+  const thead = document.getElementById("thead");
+  const tbody = document.getElementById("tbody");
+  if (!data.length) { thead.innerHTML = "<tr><th>No data</th></tr>"; return; }
+  const cols = Object.keys(data[0]);
+  thead.innerHTML = "<tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr>";
+  tbody.innerHTML = data.map(row =>
+    "<tr>" + cols.map(c => "<td>" + (row[c] || "") + "</td>").join("") + "</tr>"
+  ).join("");
+}
+
+// Live Search
+document.getElementById("search").addEventListener("input", function() {
+  const term = this.value.toLowerCase();
+  const filtered = flatData.filter(row =>
+    Object.values(row).some(val => String(val).toLowerCase().includes(term))
+  );
+  renderTable(filtered);
+});
+</script>
+</body>
+</html>
