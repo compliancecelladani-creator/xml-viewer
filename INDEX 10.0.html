@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>INDEX 10.0 — CSV/XLSX → XML Converter + XML Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:18px;background:#ffffff;color:#111}
+.card{border:1px solid #ccc;border-radius:8px;padding:14px;margin-bottom:18px;background:#f9f9f9}
+h2{margin-top:0;color:#0b5ea8}
+.btn{padding:8px 14px;border:none;border-radius:6px;background:#007acc;color:white;cursor:pointer}
+.btn:disabled{background:#ccc}
+input[type=file]{margin-top:8px}
+.log{background:#f3f3f3;border:1px solid #ddd;padding:8px;border-radius:6px;height:100px;overflow:auto;font-size:13px;margin-top:8px}
+.searchbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.search{flex:1;padding:8px;border:1px solid #ccc;border-radius:6px}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{border:1px solid #eee;padding:6px;text-align:left;font-size:13px}
+th{background:#e9f3ff}
+</style>
+</head>
+<body>
+<h2>INDEX 10.0 — CSV/XLSX → XML Converter + XML Viewer</h2>
+
+<div class="card">
+  <h3>Step 1 (Optional): Convert CSV/XLSX to XML</h3>
+  <input type="file" id="convertInput" accept=".csv,.xlsx,.xls"/>
+  <button id="convertBtn" class="btn" disabled>Convert & Download XML</button>
+  <div class="log" id="convertLog"></div>
+</div>
+
+<div class="card">
+  <h3>Step 2 (Required): Load XML File to View & Search</h3>
+  <input type="file" id="xmlInput" accept=".xml"/>
+  <div class="searchbar">
+    <input id="searchInput" class="search" placeholder="Type to search (live)" />
+    <button id="clearSearch" class="btn">Clear</button>
+  </div>
+  <div class="log" id="xmlLog"></div>
+  <div style="overflow:auto;max-height:70vh">
+    <table id="dataTable"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+  </div>
+</div>
+
+<script>
+const convertInput=document.getElementById('convertInput');
+const convertBtn=document.getElementById('convertBtn');
+const convertLog=document.getElementById('convertLog');
+const xmlInput=document.getElementById('xmlInput');
+const xmlLog=document.getElementById('xmlLog');
+const thead=document.getElementById('thead');
+const tbody=document.getElementById('tbody');
+const searchInput=document.getElementById('searchInput');
+const clearSearch=document.getElementById('clearSearch');
+
+let xmlData=[];
+
+function log(el,msg){el.textContent='['+new Date().toLocaleTimeString()+'] '+msg+'\n'+el.textContent;}
+
+// CSV/XLSX → XML
+let fileToConvert=null;
+convertInput.addEventListener('change',e=>{
+  fileToConvert=e.target.files[0]||null;
+  convertBtn.disabled=!fileToConvert;
+});
+
+convertBtn.addEventListener('click',async()=>{
+  if(!fileToConvert)return;
+  const ext=fileToConvert.name.split('.').pop().toLowerCase();
+  convertLog.textContent='';
+  log(convertLog,'Starting conversion: '+fileToConvert.name);
+  try{
+    let rows=[];
+    if(ext==='csv'){
+      rows=await parseCSV(fileToConvert);
+    }else{
+      rows=await parseXLSX(fileToConvert);
+    }
+    const xml=buildXML(rows);
+    downloadXML(xml,fileToConvert.name.replace(/\.[^/.]+$/,'')+'.xml');
+    log(convertLog,'Conversion complete. XML downloaded.');
+  }catch(err){
+    log(convertLog,'Error: '+err.message);
+  }
+});
+
+function parseCSV(file){
+  return new Promise((resolve,reject)=>{
+    const results=[];
+    Papa.parse(file,{
+      header:true,skipEmptyLines:true,
+      step:function(row){results.push(row.data);},
+      complete:function(){resolve(results);},
+      error:function(e){reject(e);}
+    });
+  });
+}
+
+function parseXLSX(file){
+  return new Promise(async(resolve,reject)=>{
+    try{
+      const data=new Uint8Array(await file.arrayBuffer());
+      const workbook=XLSX.read(data,{type:'array'});
+      const sheet=workbook.Sheets[workbook.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(sheet,{defval:''});
+      resolve(rows);
+    }catch(e){reject(e);}
+  });
+}
+
+function buildXML(rows){
+  if(!rows.length)return '<data></data>';
+  const cols=Object.keys(rows[0]);
+  let xml='<data>\n';
+  for(const r of rows){
+    xml+='  <row>';
+    for(const c of cols){
+      xml+='<' + c.replace(/[^a-zA-Z0-9_]/g,'_') + '>' + escapeXML(r[c]) + '</' + c.replace(/[^a-zA-Z0-9_]/g,'_') + '>';
+    }
+    xml+='</row>\n';
+  }
+  xml+='</data>';
+  return xml;
+}
+function escapeXML(v){if(v==null)return '';return String(v).replace(/[<>&]/g,ch=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch]));}
+function downloadXML(xml,name){
+  const blob=new Blob([xml],{type:'application/xml'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=name;
+  a.click();
+}
+
+// XML Viewer
+xmlInput.addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  xmlLog.textContent='';
+  log(xmlLog,'Reading '+file.name);
+  const text=await file.text();
+  const parser=new DOMParser();
+  const xmlDoc=parser.parseFromString(text,'text/xml');
+  const rows=Array.from(xmlDoc.getElementsByTagName('row'));
+  if(!rows.length){log(xmlLog,'No <row> found in XML');return;}
+  xmlData=rows.map(row=>{
+    const obj={};
+    Array.from(row.children).forEach(c=>obj[c.nodeName]=c.textContent);
+    return obj;
+  });
+  renderTable(xmlData);
+  log(xmlLog,'Loaded '+xmlData.length+' records.');
+});
+
+function renderTable(data){
+  if(!data.length){thead.innerHTML='';tbody.innerHTML='<tr><td>No data</td></tr>';return;}
+  const cols=Object.keys(data[0]);
+  thead.innerHTML='<tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+  tbody.innerHTML=data.map(r=>'<tr>'+cols.map(c=>'<td>'+r[c]+'</td>').join('')+'</tr>').join('');
+}
+
+// Search
+searchInput.addEventListener('input',()=>{
+  const term=searchInput.value.trim().toLowerCase();
+  if(!term){renderTable(xmlData);return;}
+  const filtered=xmlData.filter(r=>Object.values(r).some(v=>String(v).toLowerCase().includes(term)));
+  renderTable(filtered);
+});
+
+clearSearch.addEventListener('click',()=>{
+  searchInput.value='';
+  renderTable(xmlData);
+});
+</script>
+</body>
+</html>
